@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detector de Números</title>
+    <script src='https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js'></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+        }
+
+        .container {
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .video-container {
+            position: relative;
+            margin: 20px 0;
+            width: 100%;
+            max-width: 640px;
+        }
+
+        #video {
+            width: 100%;
+            height: auto;
+            border-radius: 8px;
+        }
+
+        #canvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .controls {
+            margin: 20px 0;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 0 10px;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        #resultado {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 10px;
+            }
+            
+            button {
+                padding: 10px 20px;
+                font-size: 14px;
+                margin: 5px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Detector de Números</h1>
+        
+        <div class="video-container">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas"></canvas>
+        </div>
+
+        <div class="controls">
+            <button id="iniciarCamara">Abrir Cámara</button>
+            <button id="detenerCamara" disabled>Cerrar Cámara</button>
+        </div>
+
+        <div id="resultado">
+            Números detectados aparecerán aquí
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const resultado = document.getElementById('resultado');
+        const btnIniciar = document.getElementById('iniciarCamara');
+        const btnDetener = document.getElementById('detenerCamara');
+        let stream = null;
+        let procesando = false;
+        let ultimoNumero = '';
+        let contadorCoincidencias = 0;
+
+        // Configurar Tesseract
+        const worker = Tesseract.createWorker({
+            logger: m => console.log(m)
+        });
+
+        async function inicializarTesseract() {
+            await worker.load();
+            await worker.loadLanguage('eng');
+            await worker.initialize('eng');
+            await worker.setParameters({
+                tessedit_char_whitelist: '0123456789',
+                tessedit_pageseg_mode: '7',
+                tessedit_ocr_engine_mode: '2'
+            });
+        }
+
+        inicializarTesseract();
+
+        // Función para iniciar la cámara
+        async function iniciarCamara() {
+            try {
+                const constraints = {
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        focusMode: 'continuous'
+                    }
+                };
+                
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                btnIniciar.disabled = true;
+                btnDetener.disabled = false;
+                
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    detectarNumeros();
+                };
+            } catch (err) {
+                console.error('Error al acceder a la cámara:', err);
+                alert('Error al acceder a la cámara. Asegúrate de dar permisos.');
+            }
+        }
+
+        function detenerCamara() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                resultado.textContent = 'Números detectados aparecerán aquí';
+                btnIniciar.disabled = false;
+                btnDetener.disabled = true;
+                ultimoNumero = '';
+                contadorCoincidencias = 0;
+            }
+        }
+
+        async function detectarNumeros() {
+            if (!stream || procesando) return;
+            
+            procesando = true;
+            
+            try {
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                const { data: { text } } = await worker.recognize(canvas);
+                let numeros = text.match(/\d+/g);
+                
+                if (numeros) {
+                    // Filtrar números de 6 dígitos o más
+                    numeros = numeros.filter(num => num.length >= 6);
+                    
+                    if (numeros.length > 0) {
+                        const numeroDetectado = numeros[0];
+                        
+                        // Verificar si es el mismo número que el anterior
+                        if (numeroDetectado === ultimoNumero) {
+                            contadorCoincidencias++;
+                            
+                            // Si el mismo número se detecta 3 veces seguidas, mostrarlo
+                            if (contadorCoincidencias >= 3) {
+                                resultado.textContent = numeroDetectado;
+                                
+                                // Dibujar rectángulo
+                                ctx.strokeStyle = 'red';
+                                ctx.lineWidth = 4;
+                                ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
+                            }
+                        } else {
+                            ultimoNumero = numeroDetectado;
+                            contadorCoincidencias = 1;
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error en la detección:', error);
+            }
+            
+            procesando = false;
+            if (stream) {
+                requestAnimationFrame(detectarNumeros);
+            }
+        }
+
+        btnIniciar.addEventListener('click', iniciarCamara);
+        btnDetener.addEventListener('click', detenerCamara);
+    </script>
+</body>
+</html> 
